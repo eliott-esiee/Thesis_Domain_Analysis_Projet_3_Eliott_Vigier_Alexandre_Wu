@@ -1,0 +1,901 @@
+
+---
+title: "<FONT color='#0066CC'><FONT size = 4 ><DIV align= center> AP-4209 ESIEE-Paris: 2023 -2024 </DIV></FONT></FONT>"
+output:
+  html_document:
+    highlight: textmate
+    theme: readable
+    toc: yes
+    toc_depth: 6
+    toc_float: yes
+---
+
+
+
+```{=html}
+<style type="text/css">
+body, td {font-size: 17px;}
+code.r{font-size: 5px;}
+
+pre { font-size: 15px;}
+</style>
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<FONT color='#0066CC'><FONT size = 4 >
+
+::: {align="center"}
+Fouille de données avec R pour la data science et l'intelligence artificielle\
+
+Projet 3 : Classification bayésienne et analyse factorielle discriminante
+:::
+
+
+</FONT></FONT>
+
+<FONT color='#0066CC'><FONT size = 4 >
+
+::: {align="center"}
+Eliott Vigier et Alexandre Wu -- ESIEE Paris\
+:::
+
+</FONT></FONT>
+
+<hr style="border: 1px  solid gray">
+
+</hr>
+
+**Résumé :** Le jeu de données contient des informations sur les thèses de doctorat françaises, en mettant l’accent sur la similarité sémantique. Cela représente un défi unique pour la classification en raison de la nature textuelle et sémantique des données.
+
+<br>
+
+**Objectif principal :** Mettre en place une classification bayésienne avancée avec analyse discriminante sur un jeu de données de résumés de thèses de doctorat françaises afin de les catégoriser en domaines d'étude.
+
+<br>
+
+**Source des données :** Recherche de similarité sémantique de thèse de doctorat française à partir de Kaggle.
+
+* **Lien :** https://www.kaggle.com/code/antoinebourgois2/french-doctoral-thesissemantic-similarity-search
+
+<br>
+
+<hr style="border: 1px  solid gray">
+
+### <FONT color='#000033'><FONT size = 3> 1 Introduction  </FONT></FONT> 
+
+
+Dans ce projet, nous allons cherché à prédire le domaine d'une thèse en fonction de sa descritpion. Après le chargement et l'exploration initiale des données, nous procédons au prétraitement pour préparer les données à l'analyse. Nous appliquerons ensuite l'Analyse Discriminante Linéaire (LDA) pour la réduction de dimensionnalité et la classification, suivie d'une évaluation rigoureuse de la performance du modèle à travers diverses métriques. On observera aussi un modèle bayésien naif. Pour optimiser les hyperparamètres, nous implémenterons une grid search, et finalement, nous validerons la robustesse de notre modèle à l'aide de techniques de validation croisée.
+
+<br>
+<hr style="border: 1px  solid gray">
+
+#### <FONT color='#000033'><FONT size = 3> 1.1 Programmation </FONT> 
+
+Nous utilisons :   
+
+- `dplyr` : Manipulation de données avec des fonctions intuitives.
+- `plotly` : Création de graphiques interactifs.
+- `tidyverse` : Collection de packages pour la science des données (inclut `dplyr`, `ggplot2`, etc.).
+- `stringr` : Manipulation de chaînes de caractères.
+- `tm` : Gestion et traitement de textes pour l'analyse de contenu.
+- `kableExtra` : [Génération de tableaux améliorés](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) en HTML ou PDF.
+- `knitr` : Intégration de code R dans des documents LaTeX, HTML, Markdown.
+- `text2vec` : Traitement de texte et modélisation vectorielle.
+- `tokenizers` : Tokenisation et stemming du texte pour l'analyse.
+- `tidytext` : Traitement de texte dans le cadre du tidyverse.
+- `caret` : Séparation des données ici.
+- `MASS` : Utilisation pour l'AFD (lda).
+- `e1071` : Fonctions pour l'apprentissage statistique, y compris la classification bayésienne.
+
+Nous avons également utilisé Chat GPT comme aide à se projet. 
+
+
+<br>
+
+### <FONT color='#000033'><FONT size = 3> 2 Chargement et exploration des données </FONT></FONT>
+
+<br>
+
+##### <FONT color='#000033'><FONT size =3> 2.1 Chargez le jeu de données dans R </FONT> </FONT> 
+
+On commence à charger les librairies nécessaires pour le projet :
+```{r}
+library(dplyr)
+library(plotly)
+library(tidyverse) 
+library(stringr)
+library(tm) 
+library(kableExtra)
+library(knitr)
+library(text2vec)
+library(tokenizers)
+library(tidytext)
+library(caret)
+library(MASS)
+library(e1071)
+```
+
+Ensuite on charge le dataset :
+
+```{r, echo = T}
+# Chargement des jeux de données
+df  <- read.csv("french_thesis_20231021_metadata.csv")
+```
+
+Affichage du tableau avec *kableExtra* des deux jeux données
+
+```{r, echo = T}
+head(df,3) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+On affiche seulement les 3 premières lignes comme le jeu de données est volumineux
+Voici sa shape.
+
+```{r, echo = T}
+dim(df)
+```
+
+<br>
+
+##### <FONT color='#000033'><FONT size =3> 2.2 Analyse exploratoire des données (EDA) pour comprendre la distribution des classes </FONT> </FONT> 
+
+<br>
+
+
+On cherche les différents domaines de thèse du dataset.
+
+```{r, echo = T}
+# Type de domaines
+type_Domain<-unique(df$Domain)
+num_type_Domain<- length(type_Domain)
+num_type_Domain
+```
+
+
+On a alors 27 456 différents domaines de thèse.
+
+On observe la distribution des différents domaines du jeu de données. Comme il y a 27 456 différents types, on va se concentrer sur les 10 premiers. Ici on affiche les 15 premiers afin d'observer les domaines et savoir si aucun ne se repète.
+```{r, echo = T}
+# Création du tableau de distribution
+domain_distribution <- table(df$Domain)
+# Tri du tableau de distribution de manière décroissante
+domain_distribution_sorted_desc <- sort(domain_distribution, decreasing = TRUE)
+# Affichage du tableau trié de manière décroissante
+head(domain_distribution_sorted_desc,15)
+```
+
+On observe alors une répartion assez inégale. On voit par exemple que le domaine "Médecine" a presque 3 fois plus de thèses que le domaine "Droit public".
+De plus, on remarque que la "Psychologie" et les "Sciences appliquées" se répètent entre différentes classes ("Sciences biologiques et fondamentales appliquées. Psychologie"). 
+Ainsi on les supprime et prend les deux suivantes : "Sociologie" et "Droit public". (Raisonnement avec Joshua Dumont)
+
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 3 Prétraitement des données </FONT></FONT>
+
+<br>
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 3.1 Réduction du dataframe </FONT></FONT>
+
+<br>
+
+```{r, echo = T}
+# Extraire les 12 premiers domaines
+top_12_domains <- names(domain_distribution_sorted_desc)[1:12]
+
+# Filtrer df pour garder seulement les lignes correspondant aux 12 premiers domaines
+df_reduit <- df[df$Domain %in% top_12_domains, ]
+
+# Enlever les lignes où la colonne 'Domain' contient 'Sciences appliquées' ou 'Psychologie'
+df_reduit <- df_reduit[!(df_reduit$Domain %in% c("Sciences appliquées", "Psychologie")), ]
+```
+
+Voici le résultat pour les 3 premières lignes.
+
+```{r, echo = T}
+# Affichage
+head(df_reduit,3) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+On peut regarder les dimennsions de notre jeu de données.
+
+```{r, echo = T}
+dim(df_reduit)
+```
+
+On se rend compte qu'on a alors diviser par 5 notre nombre de lignes (122 735).
+
+On va maintenant se charger d'enlever les données vides et les données manquantes de la colonne "Description". Cette dernière nous permettra ensuite de prédire le "Domain".
+
+Texte vide :
+
+```{r, echo = T}
+# Supprimer les lignes où la colonne 'Description' ne contient pas de texte
+df_reduit_clean <- df_reduit[df_reduit$Description != "" & nzchar(trimws(df_reduit$Description)), ]
+# Taille des données
+dim(df_reduit_clean)
+```
+
+On a alors perdu preque 40 000 lignes.
+
+```{r, echo = T}
+# Enlever les lignes avec des valeurs NA dans la colonne 'Description'
+df_reduit_clean <- df_reduit_clean[!is.na(df_reduit_clean$Description), ]
+# Taille des données
+dim(df_reduit_clean)
+```
+
+0 données manquantes.
+
+On va observer notre distribution.
+
+```{r, echo = T}
+# Création du tableau de distribution
+domain_distribution_reduit <- table(df_reduit_clean$Domain)
+domain_distribution_reduit
+```
+
+On constate alors que étonnament, la classe "Médecine" qui comportait le plus de thèses (22 955), est celle qui en comporte le moins maintenant dans ces 10 Classes (436). Ainsi beaucoup d'entre-elles étaient vides.
+
+
+Interprétation graphique.
+
+```{r, echo = T}
+# Définition une palette personnalisée de 10 couleurs
+my_colors <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999", "#66c2a5")
+
+ggplot(df_reduit_clean, aes(x=Domain, fill = Domain)) +
+      geom_bar() +
+      scale_fill_manual(values=my_colors) +
+      xlab("type") +
+      ylab("Fréquence") +
+      ggtitle("Distribution des types de domaines")
+```
+
+Les descriptions sont assez volumineuses comparées aux projets précédents, ainsi il va falloir encore plus réduire que d'habitude les données.
+On garde en indice les numéros de lignes au cas où on en aurait besoin plus tard.
+
+```{r, echo = T}
+# Ajoute une colonne 'Indice' avec une séquence allant de 1 au nombre de lignes.
+df_reduit_clean$Indice <- 1:nrow(df_reduit_clean)
+
+# Affichage
+head(df_reduit,3) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+Maintenant on va vouloir entraîner le modèle. Cependant il faut faire pour ceci un prétraitement des données. On a 10 classes très mals réparties, on va donc les ré-équilibrées.
+On prend 110 données de chaque classes. Ce dataset servira à l'entrainement (80 %) et au test (20 %). On prend 110 données de chaque classes car c'est proche de la limite de lda.
+Par exemple pour 120 par classes on obtenait 'error stack overflow'.
+
+```{r, echo = T}
+# Initialise le dataframe equilibre vide
+df_equilibre_reduit <- data.frame()
+
+# Liste des domaines uniques
+domaines <- unique(df_reduit_clean$Domain)
+
+# Itérer sur chaque domaine
+for (domaine in domaines) {
+  # Sélectionner les lignes du domaine courant
+  sous_ensemble <- df_reduit_clean[df_reduit_clean$Domain == domaine, ]
+  
+  # Vérifie si le nombre de lignes dépasse 110
+  if (nrow(sous_ensemble) > 110) {
+    # Réduis aléatoirement à 110 lignes
+    set.seed(123) # Pour la reproductibilité
+    indices <- sample(nrow(sous_ensemble), 110)
+    sous_ensemble <- sous_ensemble[indices, ]
+  }
+  
+  # Ajoute le sous-ensemble réduit au dataframe equilibre
+  df_equilibre_reduit <- rbind(df_equilibre_reduit, sous_ensemble)
+}
+
+
+# Vérification des dimensions du dataframe equilibre
+dim(df_equilibre_reduit)
+```
+
+
+```{r, echo = T}
+# Définition une palette personnalisée de 10 couleurs
+my_colors <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999", "#66c2a5")
+
+ggplot(df_equilibre_reduit, aes(x=Domain, fill = Domain)) +
+      geom_bar() +
+      scale_fill_manual(values=my_colors) +
+      xlab("type") +
+      ylab("Fréquence") +
+      ggtitle("Distribution des types de domaines")
+```
+
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 3.2 Nettoyage les données textuelles en supprimant les caractères spéciaux, la ponctuation et les mots vides </FONT></FONT>
+
+<br>
+
+Maintenant, on peut nétoyer toutes les données de ce jeu de données.
+
+```{r, echo = T}
+# Étape 1: Supprimer la ponctuation
+
+df_equilibre_reduit$Description_clean <- sapply(df_equilibre_reduit$Description, removePunctuation)
+
+# Étape 2: Convertir en minuscules et supprimer les stop words
+
+# Mettre en miniscule
+df_equilibre_reduit$Description_clean <- sapply(df_equilibre_reduit$Description_clean, tolower)
+# Supprimer les mots vides
+df_equilibre_reduit$Description_clean <- sapply(df_equilibre_reduit$Description_clean, function(x) removeWords(x, stopwords("fr")))
+```
+
+```{r, echo = T}
+# Affichage
+head(df_equilibre_reduit,3) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+On va labéliser les classes et les numéroter de 1 à 10.
+
+```{r, echo = T}
+# Convertir les étiquettes des domaines en entiers
+domaines_type<- unique(df_equilibre_reduit$Domain)
+# Utilise les types de domaines uniques comme niveaux dans la conversion de facteurs
+df_equilibre_reduit <- df_equilibre_reduit %>%
+  mutate(domain_numeric = as.integer(factor(Domain, levels = domaines_type))-1)
+```
+
+```{r, echo = T}
+# Affichage
+head(df_equilibre_reduit,3) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 3.3 Tokenisation et stemming </FONT></FONT>
+
+<br>
+
+On peut maintenant tokenizer et stemmiser le texte.
+
+
+```{r, echo = T}
+# Applique la tokenization et le stemming avec la fonction tokenize_word_stems
+df_equilibre_reduit$Description_clean<- sapply(df_equilibre_reduit$Description_clean, function(phrase){
+    tokenize_word_stems(phrase,language = "french")
+  })
+
+# On met des espaces entre les mots au lieu de ','
+df_equilibre_reduit$Description_clean <- sapply(df_equilibre_reduit$Description_clean, paste, collapse = " ")
+```
+
+```{r, echo = T}
+# Affichage
+head(df_equilibre_reduit,1) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 3.4 TF-IDF </FONT></FONT>
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 3.4.1 Séparation de l'entrainement et du test du dataset </FONT></FONT>
+
+<br>
+
+Nos données sont maintenant prêtes pour une TF-IDF avant l'entrainement. Pour ceci séparons les en 80 % d'entrainment et 20 % de test.
+
+```{r, echo = T}
+set.seed(123) # pour une reproduction cohérente des résultats
+Index <- createDataPartition(df_equilibre_reduit$domain_numeric, p = 0.8, list = FALSE)
+train <- df_equilibre_reduit[Index,]
+test <- df_equilibre_reduit[-Index,]
+
+print(dim(train))
+print(dim(test))
+```
+
+On a donc 880 données d'entrainement (88 par classes) et 220 données de test (22 par classes)
+
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 3.4.2 Calcul TF-IDF </FONT></FONT>
+
+<br>
+
+Faisons la TF-IDF des données d'entrainement puis de test.
+
+Pour l'entrainement.
+
+```{r, echo = T}
+# TF-IDF
+# Étape 1: Création d'un corpus
+corpus_train <- VCorpus(VectorSource(train$Description_clean))
+# Étape 2: Création d'une DTM et application de la TF-IDF
+dtm_train <- DocumentTermMatrix(corpus_train, control = list(weighting = weightTfIdf))
+
+# Sauvegarde du vocabulaire pour le jeu d'entraînement
+dict_train <- Terms(dtm_train)
+
+# Convertir en dataframe 
+tf_idf_train_dataframe <- as.data.frame(as.matrix(dtm_train))
+```
+
+```{r, echo = T}
+# Affichage des 5 premières et dernières colonnes 
+head(tf_idf_train_dataframe[, c(1:5, (ncol(tf_idf_train_dataframe)-4):ncol(tf_idf_train_dataframe))], 6)%>%
+  kbl(digits=3) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+
+Pour le test.
+
+```{r, echo = T}
+# TF-IDF
+# Étape 1: Création d'un corpus
+corpus_test <- VCorpus(VectorSource(test$Description_clean))
+# Étape 2: Création d'une DTM et application de la TF-IDF avec le dictionnaire
+dtm_test <- DocumentTermMatrix(corpus_test, control = list(weighting = weightTfIdf, dictionary = dict_train))
+
+# Convertir en dataframe 
+tf_idf_test_dataframe <- as.data.frame(as.matrix(dtm_test))
+```
+
+
+```{r, echo = T}
+# Affichage des 5 premières et dernières colonnes 
+head(tf_idf_test_dataframe[, c(1:5, (ncol(tf_idf_test_dataframe)-4):ncol(tf_idf_test_dataframe))], 6)%>%
+  kbl(digits=3) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 4 Calcul de la lda </FONT></FONT>
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 4.1 Séparation des données </FONT></FONT>
+
+<br>
+
+On sépare nos données pour l'entrainement.
+
+```{r, echo = T}
+# Séparation des variables catégorielles et numériques
+X_train <- tf_idf_train_dataframe
+X_test <- tf_idf_test_dataframe
+y_train <- as.factor(train$domain_numeric)
+y_test <- as.factor(test$domain_numeric)
+# Tableau de la TF-IDF et des Classes
+train_df <- X_train
+test_df <- X_test
+# Ajout du vecteur de prédictions
+train_df$domain_numeric <- y_train 
+test_df$domain_numeric <- y_test
+```
+
+train_df et test_df peuvent être utliser pour la prédiction car d'après la doc le modèle réutilise seulement les colonnes du même noms.
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 4.2 Entrainement du modèle </FONT></FONT>
+
+<br>
+
+Passons à la lda.
+
+Etape de traitement longue, on enregistre et charge le modèle dans un fichier fichier Rda.
+
+```{r, echo = T}
+# lda_model <- lda(domain_numeric ~ ., data =train_df)
+# save(lda_model, file = "lda_model.Rda")
+```
+```{r, echo = T}
+load("lda_model.Rda")
+```
+
+Observation de la lda sur les données d’entrainement.
+```{r, echo = T}
+lda_scores <- predict(lda_model)$x
+
+# Affichage
+head(lda_scores,8) %>%
+  kbl(digits=3) %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped') %>% scroll_box( height = "250px")
+```
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 5 Métriques </FONT></FONT>
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 5.1 Modèle lda </FONT></FONT>
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 5.1.2 Accuracy d'entrainement </FONT></FONT>
+
+<br>
+
+On calcule l'accuracy d'entrainement.
+
+```{r, echo = T}
+predicted_classes <- predict(lda_model, train_df)$class
+
+# Calculer l'exactitude
+exactitude <- mean(predicted_classes == y_train)
+exactitude
+```
+
+72 % d'accuracy d'entrainement est assez correct, ceci évitera normalement le problème d'overfitting. On pourrait espérer une plus grande accuracy avec plus de données.
+
+Regardons l'accuracy sur le test pour un modèle DFA.
+On calcule les prédicitons.
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 5.1.2 Accuracy de test, Precision, Recall, and F1-score </FONT></FONT>
+
+<br>
+
+```{r, echo = T}
+predictions_lda <- predict(lda_model, test_df)$class
+```
+
+On fait la matrice de confusion.
+
+```{r, echo = T}
+conf_lda<- table("Prediction" = predictions_lda, "TRUE Labels" = y_test)
+conf_lda
+```
+
+Fonction qui permet d'avoir toutes les metriques.
+
+```{r, echo = T}
+calculate_metrics <- function(confusionMatrix) {
+    # Extracting the number of classes
+    n <- nrow(confusionMatrix)
+    # Initializing vectors to store metrics for each class
+    precision <- numeric(n)
+    recall <- numeric(n)
+    f1_score <- numeric(n)
+    # Calculating metrics for each class
+    for (i in 1:n) {
+      TP <- confusionMatrix[i, i]
+      FP <- sum(confusionMatrix[i, ]) - TP
+      FN <- sum(confusionMatrix[, i]) - TP
+      precision[i] <- TP / (TP + FP)
+      recall[i] <- TP / (TP + FN)
+      f1_score[i] <- ifelse((precision[i] + recall[i]) > 0, (2 * precision[i] * recall[i]) / (precision[i] + recall[i]), 0)
+    }
+    # Calculating the global accuracy
+    global_accuracy <- sum(diag(confusionMatrix)) / sum(confusionMatrix)
+    # Returning a list containing the metrics
+    metrics <-list(
+      "Global Accuracy" = global_accuracy,
+      "Precision" = precision,
+      "Recall" = recall,
+      "F1 Score" = f1_score
+    )
+    # Creating a data frame to display precision, recall, and F1 score for each class
+    metrics_df <- data.frame(
+    Class = rownames(confusionMatrix),
+    Precision = metrics$Precision,
+    Recall = metrics$Recall,
+    `F1 Score` = metrics$`F1 Score`)
+    # Ajout d'une colonne "Global Accuracy" avec des NA
+    metrics_df$`Global Accuracy` <- NA
+    metrics_df
+    # Calcul des moyennes pour les autres métriques
+    average_metrics <- c(
+    "Average",
+    mean(metrics$Precision),
+    mean(metrics$Recall),
+    mean(metrics$`F1 Score`),
+    metrics$`Global Accuracy`  # Ajouter l'accuracy globale pour la ligne "Average"
+    )
+    # Ajout de la ligne des moyennes au data frame
+    metrics_df <- rbind(metrics_df, average_metrics)
+    return (metrics_df)
+  }
+```
+
+```{r, echo = T}
+# Création d'une table de correspondance entre les étiquettes de domaines et les numéros
+domaines_tableau <- setNames(as.character(0:(length(domaines_type) - 1)), domaines_type)
+# Affichage
+domaines_tableau%>%
+    kbl(digits=3) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+
+```{r, echo = T}
+# Calcul des metriques
+metrics_lda <- calculate_metrics(conf_lda)
+# Affichage
+metrics_lda%>%
+    kbl(digits=3) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+On a des résultats intéressants :
+
+La classe 1 présente une précision parfaite de 100 %, signifiant que toutes les prédictions pour cette classe étaient correctes. Cependant, cette haute précision est contrebalancée par un rappel relativement bas de 26.92 %, ce qui signifie que le modèle a manqué un grand nombre de vrais positifs réels pour cette classe.
+Le score F1, qui combine la précision et le rappel, varie considérablement d'une classe à l'autre, allant de 42.42 % pour la classe 1 à 81.82 % pour la classe 9. Cette dernière classe montre également une précision élevée de 90 % avec un rappel de 75 %, indiquant une forte performance du modèle pour cette catégorie.
+
+En moyenne, la précision du modèle est de 63.41 %, ce qui suggère que lorsqu'il prédit une classe, il est correct dans cette proportion. Le rappel est en moyenne de 58.04 %, indiquant que le modèle a capturé environ 58 % des cas positifs réels dans l'ensemble des données. Le score F1, qui est la moyenne harmonique de la précision et du rappel, se tient à 57.12 %.
+
+La précision globale du modèle est de 57.27 %.
+
+On peut en conclure que le modèle est correct mais qu'on manque de données à cause du manque de puissance de nos machines. En effet, on a 9 classes et certaines d'entre-elles sont proches. On peut regarder par exemple la ligne de la classe 8 de notre matrice de confusion qui correspond aux sciences de gestions. On remarque que le modèle a prédit 4 éléments de la classe 2, 5 éléments de la classe 3 et 6 éléments de la classe 5 correspondant respectivement à l'histoire, l'informatique et les sciences économiques. Ce sont des domaines qui dans leurs descriptions peuvent être liés car en sciences de gestion il peut y avoir des références historiques, de la programmation ou même de l'économie par exemple. On a aussi l'exemple où le modèle prédit 15 classes chimie alors que c'est 15 dernière sont de classe physique (première ligne de la matrice de confusion). Ainsi, avec seulement 88 données par classes, on peut manquer de précisons dans des domaines liés qu'on pourrait certainement réduire avec plus données pour complexifier notre modèle. Une autre solution serait d'envisager un autre modèle. 
+
+<br>
+
+#### <FONT color='#000033'> <FONT size = 3> 5.2 Modèle bayésien naif </FONT></FONT>
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 5.2.2 Accuracy d'entrainement </FONT></FONT>
+
+<br>
+
+Regardons maintenant le modèle bayésien.
+
+```{r, echo = T}
+NB_model <- naiveBayes(data.frame(lda_scores), y_train)
+```
+
+On calcule l'accuracy d'entrainement.
+
+```{r, echo = T}
+
+pred_train_bayes <- predict(NB_model, newdata = data.frame(lda_scores))
+
+# Calculer l'exactitude
+exactitude_bayes <- mean(pred_train_bayes == y_train)
+exactitude_bayes
+```
+
+75 % d'accuracy d'entrainement est assez correct, ceci évitera normalement le problème d'overfitting. On pourrait espérer une plus grande accuracy avec plus de données.
+
+Regardons l'accuracy sur le test pour un modèle naive Bayes.
+On calcule les prédicitons.
+
+<br>
+
+##### <FONT color='#000033'> <FONT size = 3> 5.2.2 Accuracy de test, Precision, Recall, and F1-score </FONT></FONT>
+
+<br>
+
+```{r, echo = T}
+# On a auparavant calculé la prédiction par classe sur la lda
+predictions_lda_num <- predict(lda_model, test_df)$x
+predictions_bayes <- predict(NB_model, newdata = data.frame(predictions_lda_num))
+```
+
+On fait la matrice de confusion.
+
+```{r, echo = T}
+conf_bayes<-table(predictions_bayes,y_test)
+conf_bayes
+```
+```{r, echo = T}
+# Affichage
+domaines_tableau%>%
+    kbl(digits=3) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+Calcul des metriques.
+
+```{r, echo = T}
+# Calcul des metriques
+metrics_bayes <- calculate_metrics(conf_bayes)
+# Affichage
+metrics_bayes%>%
+    kbl(digits=3) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+
+Meilleurs cas :
+Classe 6 affiche la meilleure précision à 83.33 %, bien qu'avec un rappel faible de 21.74 %. Cela indique que lorsque le modèle prédit cette classe, il est presque toujours correct, mais il manque une grande portion de vrais positifs.
+Classe 1 a le meilleur rappel à 80.77 %, avec une précision de 39.62 %, montrant une excellente capacité à identifier les vrais positifs de cette classe, même si cela inclut une quantité notable de fausses alertes.
+
+Pires cas :
+Classe 8 présente la plus faible précision à 24 %, avec un rappel de 30 %, indiquant une performance globalement médiocre dans la prédiction correcte de cette classe, tant en termes de précision que de capacité à identifier les vrais positifs.
+Classe 5 a le plus faible rappel à 12.5 %, même si sa précision est de 50 %. Cela suggère que le modèle a des difficultés significatives à détecter les vrais positifs dans cette classe, malgré une précision acceptable quand il prédit effectivement la classe 5.
+
+
+La précision moyenne du modèle est de 49.6 %, ce qui signifie que lorsque le modèle prédit une classe, il a environ 49.6 % de chances d'être correct.
+Le rappel moyen est de 41.47 %, indiquant que le modèle a réussi à identifier 41.47 % des vrais positifs à travers toutes les classes.
+Le score F1 moyen est de 38.82 %, fournissant une mesure combinée qui prend en compte à la fois la précision et le rappel, montre que le modèle pourrait être considérablement amélioré.
+L'accuracy globale du modèle est de 41.36 %, ce qui est cohérent avec la performance moyenne indiquée par les autres mesures.
+
+Comme expliqué dans les pires et meileurs cas, le modèle bloque encore comme auparavant à distinguer des classes. On a par ailleurs une moins bonne accuracy moyenne, une moins bonne précision moyenne, un moins bon recall moyen et un moins bon F1 score moyen.
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 6 Grid Search </FONT></FONT>
+
+<br>
+
+Avec le Grid Search on va chercher à améliorer ce modèle.
+
+```{r, echo = T}
+
+# Liste de valeurs pour laplace
+param_grid <- list(smoothing = c(0.01, 0.1, 1, 10, 100, 1000, 10000))
+
+# Stocker les résultats
+results <- data.frame(smoothing = numeric(), accuracy = numeric(), stringsAsFactors = FALSE)
+
+# Boucle sur chaque combinaison de paramètres
+for(smoothing_value in param_grid$smoothing) {
+  # Entraîner le modèle Naive Bayes avec le paramètre de lissage courant
+  NB_model_grid <- naiveBayes(x = lda_scores, y = y_train, laplace = smoothing_value)
+  
+  # Faire des prédictions sur l'ensemble de test
+  predictions_bayes_grid <- predict(NB_model, newdata = data.frame(predictions_lda_num))
+  
+  # Calculer l'exactitude
+  accuracy_bayes_grid <- mean(predictions_bayes_grid == y_test)
+  
+  # Ajouter les résultats dans le dataframe
+  results <- rbind(results, data.frame(smoothing = smoothing_value, accuracy_bayes_grid))
+}
+
+# Affichage
+results%>%
+    kbl(digits=3) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", latex_options = 'stripped')
+```
+
+La constance de l'exactitude du modèle naïf bayésien à travers les différentes valeurs de l'hyperparamètre de lissage, toutes évaluées à 0.414, suggère que la modification de cet hyperparamètre n'affecte pas la performance du modèle sur cet ensemble de données. Cette insensibilité à l'ajustement de l'hyperparamètre pourrait être attribuée à la simplicité du modèle naïf bayésien, qui repose sur l'assumption forte que les caractéristiques sont indépendantes les unes des autres, conditionnées par la classe cible. Cependant les classes peuvent être liés, médecine et chimie par exemple. Ceci peut-être dure à distinguer par moment pour le modèle bayèsien.
+De plus lors de la lda on a : Warning message in lda.default(x, grouping, ...): “variables are collinear”. Ceci pourrait en être une explication également.
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 7 Validation croisée </FONT></FONT>
+
+<br>
+
+On l'a fait sur 5 fold pour des problèmes de temps d'execution. 
+
+```{r, echo = T}
+# set.seed(123)
+
+# # Créer des indices pour la validation croisée k-fold
+# k <- 5
+# folds <- createFolds(df_equilibre_reduit$domain_numeric, k = k, list = TRUE, returnTrain = TRUE)
+
+# # Initialiser une liste pour stocker les résultats
+# accuracy_list_lda <- vector("numeric", length = k)
+# accuracy_list_NB <- vector("numeric", length = k)
+
+# for(i in seq_along(folds)) {
+#   # Séparation du jeu de données en train et test pour le pli
+#   train_indices <- folds[[i]]
+#   test_indices <- setdiff(seq_len(nrow(df_equilibre_reduit)), train_indices)
+  
+#   train <- df_equilibre_reduit[train_indices, ]
+#   test <- df_equilibre_reduit[test_indices, ]
+  
+#   # TF-IDF pour les données d'entraînement
+#   corpus_train <- VCorpus(VectorSource(train$Description_clean))
+#   dtm_train <- DocumentTermMatrix(corpus_train, control = list(weighting = weightTfIdf))
+#   tf_idf_train <- as.data.frame(as.matrix(dtm_train))
+  
+#   # Utiliser le même vocabulaire pour les données de test
+#   corpus_test <- VCorpus(VectorSource(test$Description_clean))
+#   dtm_test <- DocumentTermMatrix(corpus_test, control = list(weighting = weightTfIdf, dictionary = Terms(dtm_train)))
+#   tf_idf_test <- as.data.frame(as.matrix(dtm_test))
+  
+
+#   # Séparation des données pour l'entraînement
+#   X_train <- tf_idf_train
+#   X_test <- tf_idf_test
+#   y_train <- as.factor(train$domain_numeric)
+#   y_test <- as.factor(test$domain_numeric)
+  
+#   # Préparation des données pour la lda
+#   train_df <- X_train
+#   test_df <- X_test
+    
+#   # Ajout de la colonne comportant les classes  
+#   train_df$domain_numeric <- y_train 
+#   test_df$domain_numeric <- y_test
+  
+#   # Calcul lda
+#   lda_model <- lda(domain_numeric ~ ., data =train_df)
+  
+#   lda_scores <- predict(lda_model)$x
+    
+#   # Prédiction sur l'ensemble de test
+#   predictions_lda <- predict(lda_model, X_test)$class
+    
+#   # Calcul de l'accuracy
+#   accuracy_lda <- sum(predictions_lda == y_test) / length(y_test)
+#   accuracy_list_lda[i] <- accuracy_lda
+    
+#   # Entraînement du modèle bayésien naïf
+#   NB_model <- naiveBayes(data.frame(lda_scores), y_train)
+  
+#   predictions_lda_num <- predict(lda_model, X_test)$x
+
+#   # Prédiction sur l'ensemble de test
+#   predictions_bayes <- predict(NB_model, newdata = data.frame(predictions_lda_num))
+  
+#   # Calcul de l'accuracy
+#   accuracy_NB <- sum(predictions_bayes == y_test) / length(y_test)
+#   accuracy_list_NB[i] <- accuracy_NB
+# }
+# mean_accuracy_lda <- mean(accuracy_list_lda)
+# mean_accuracy_NB <- mean(accuracy_list_NB)
+```
+
+```{r, echo = T}
+# save(mean_accuracy_NB,accuracy_list_NB,mean_accuracy_lda,accuracy_list_lda, file = "kfold.Rda")
+```
+
+```{r, echo = T}
+load("kfold.Rda")
+```
+
+Liste des accuracy sur les différents fold et la moyenne.
+```{r, echo = T}
+print(mean_accuracy_NB)
+print(accuracy_list_NB)
+print(mean_accuracy_lda)
+print(accuracy_list_lda)
+```
+
+Naïve Bayes (NB)
+La précision moyenne du modèle Naïve Bayes sur l'ensemble de la validation croisée est de 39.64 %.
+Les précisions obtenues dans chaque itération de la validation croisée varient de 34.55 % à 42.27 %, montrant une certaine variabilité dans la performance du modèle mais restant globalement dans une fourchette de précision similaire.
+Ici, un des folds a une mauvaise accuracy par rapport aux autres, ce qui plombe le résultats final.
+
+Analyse Discriminante Linéaire (LDA)
+La précision moyenne pour le modèle LDA est significativement plus élevée, à 58.09 %.
+Les précisions individuelles pour LDA dans la validation croisée sont relativement stables, s'étendant de 55.91 % à 59.09 %, indiquant une performance plus consistante et fiable à travers les différents sous-ensembles de données.
+On a donc gagné au final 1 %.
+
+<br>
+
+### <FONT color='#000033'> <FONT size = 3> 8 Conclusion </FONT></FONT>
+
+<br>
+
+
+Les performances observées pour les modèles Naïve Bayes et LDA révèlent des aspects distincts de chaque approche dans le contexte de la réduction de dimensionnalité par LDA. Avec une précision moyenne de 39.64 % pour Naïve Bayes et une amélioration notable à 58.09 % pour LDA, la différence souligne la meilleure capacité de LDA à gérer les données réduites malgré les avertissements de collinéarité. Ces avertissements indiquent des interrelations entre les variables qui peuvent impacter la performance des deux modèles. Cependant, LDA est plus robuste face à cette problématique pour cet ensemble de données.
+
+Les variations dans la performance de Naïve Bayes, allant de 34.55 % à 42.27 %, et la précision stable de LDA montrent que, malgré la réduction des données, Naïve Bayes reste sensible aux spécificités des folds dans la validation croisée. En revanche, LDA bénéficie peut-être de sa capacité à tirer parti de la structure linéaire des données après réduction, ce qui se reflète dans sa précision accrue.
+
+La constance de l'exactitude du modèle Naïve Bayes, même après l'ajustement de l'hyperparamètre de lissage (laplace), indique que le modèle atteint ses limites avec la structure actuelle des données. Cela pourrait est certainement dû à la simplicité du modèle Naïve Bayes qui suppose l'indépendance entre les caractéristiques, or comme dit précedemment les classes peuvent être liées et ce dernier ne fait pas la différence.
+
+Enfin on a énmormément réduit la taille des données ce qui pourrait également avoir un impact.
